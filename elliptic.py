@@ -21,17 +21,17 @@ class Elliptic:
     
     def build_central_flux_operator(self, grid, basis):
         # Build using indicating array
-        indicator = np.zeros((grid.res, grid.order))
+        indicator = np.zeros((grid.elements, grid.order))
         # face differences for numerical flux
-        face_diff0 = np.zeros((grid.res, 2))
-        face_diff1 = np.zeros((grid.res, 2))
+        face_diff0 = np.zeros((grid.elements, 2))
+        face_diff1 = np.zeros((grid.elements, 2))
         num_flux = np.zeros_like(face_diff0)
         grad_num_flux = np.zeros_like(face_diff1)
 
-        central_flux_operator = np.zeros((grid.res, grid.order, grid.res, grid.order))
+        central_flux_operator = np.zeros((grid.elements, grid.order, grid.elements, grid.order))
         self.gradient_operator = np.zeros_like(central_flux_operator)
 
-        for i in range(grid.res):
+        for i in range(grid.elements):
             for j in range(grid.order):
                 # Choose node
                 indicator[i, j] = 1.0
@@ -47,8 +47,8 @@ class Elliptic:
                 num_flux[:, 1] = -0.5 * face_diff0[:, 1]
 
                 # Compute gradient of this node
-                grad = (np.tensordot(basis.der, indicator, axes=([1], [1])) +
-                        np.tensordot(basis.np_xi, num_flux, axes=([1], [1]))).T
+                grad = (np.tensordot(basis.derivative_matrix, indicator, axes=([1], [1])) +
+                        np.tensordot(basis.numerical.get(), num_flux, axes=([1], [1]))).T
 
                 # Compute gradient's numerical flux (central)
                 face_diff1[:, 0] = grad[:, 0] - np.roll(grad[:, -1], 1)
@@ -57,7 +57,7 @@ class Elliptic:
                 grad_num_flux[:, 1] = -0.5 * face_diff1[:, 1]
 
                 # Compute operator from gradient matrix
-                operator = (np.tensordot(basis.stf, grad, axes=([1], [1])) +
+                operator = (np.tensordot(basis.advection_matrix.T, grad, axes=([1], [1])) +
                             np.tensordot(basis.face_mass, grad_num_flux + face_diff0, axes=([1], [1]))).T
 
                 # place this operator in the global matrix
@@ -68,29 +68,36 @@ class Elliptic:
                 indicator[i, j] = 0
 
         # Reshape to matrix and set gauge condition by fixing quadrature integral = 0 as extra equation in system
-        op0 = np.hstack([central_flux_operator.reshape(grid.res * grid.order, grid.res * grid.order),
-                         grid.quad_weights.get().reshape(grid.res * grid.order, 1)])
-        self.central_flux_operator = np.vstack([op0, np.append(grid.quad_weights.get().flatten(), 0)])
+        op0 = np.hstack([central_flux_operator.reshape(grid.elements * grid.order, grid.elements * grid.order),
+                         grid.global_quads.get().reshape(grid.elements * grid.order, 1)])
+        self.central_flux_operator = np.vstack([op0, np.append(grid.global_quads.get().flatten(), 0)])
         # Clear machine errors
         self.central_flux_operator[np.abs(self.central_flux_operator) < 1.0e-15] = 0
 
         # Send gradient operator to device
         self.gradient_operator = cp.asarray(self.gradient_operator)
 
-    def invert(self):
-        self.inv_op = cp.asarray(np.linalg.inv(self.central_flux_operator))
+    def invert(self, wavenumbers):
+        self.inv_op = cp.zeros((wavenumbers.shape[0], self.central_flux_operator.shape[0], 
+                                self.central_flux_operator.shape[1]))
+        # self.inv_op = cp.asarray(np.linalg.inv(self.central_flux_operator))
+        for idx in range(wavenumbers.shape[0]):
+            modified_identity = np.identity(self.central_flux_operator.shape[0])
+            modified_identity[-1, -1] = 0  # no wavenumber on gauge condition
+            to_invert = self.central_flux_operator - 0 * wavenumbers[idx]**2 * modified_identity
+            self.inv_op[idx, :, :] = cp.asarray(np.linalg.inv(to_invert))
 
     def poisson(self, charge_density, grid, basis, anti_alias=True):
         """
         Modified 1D Poisson solve (d^2 F/dx^2 = k^2 * F + S) using stabilized central flux
         """
         # Preprocess (last entry is average value)
-        rhs = cp.zeros((grid.res * grid.order + 1))
+        rhs = cp.zeros((grid.elements * grid.order + 1))
         rhs[:-1] = self.poisson_coefficient * cp.tensordot(charge_density, basis.device_mass, axes=([1], [1])).flatten()
 
         # Compute solution and remove last entry
         sol = cp.matmul(self.inv_op, rhs)[:-1] / (grid.J ** 2.0)
-        self.potential = sol.reshape(grid.res, grid.order)
+        self.potential = sol.reshape(grid.elements, grid.order)
 
         # Clean solution (anti-alias)
         if anti_alias:

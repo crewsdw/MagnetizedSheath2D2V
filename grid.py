@@ -126,7 +126,7 @@ class FiniteSpaceGrid:
 class VelocityGrid:
     """ Class for one-dimensional velocity space grids on LGL quadrature sub-grids """
 
-    def __init__(self, low, high, elements, order):
+    def __init__(self, low, high, elements, order, triple_grid=False):
         self.low, self.high = low, high
         self.elements, self.order = elements, order
         self.local_basis = b.LGLBasis1D(order=self.order)
@@ -147,9 +147,10 @@ class VelocityGrid:
         # self.create_triple_grid(lows=np.array([self.low, -8, 8]),
         #                         highs=np.array([-8, 8, self.high]),
         #                         elements=np.array([2, 11, 2]))
-        self.create_triple_grid(lows=np.array([self.low, -7.5, 7.5]),
-                                highs=np.array([-7.5, 7.5, self.high]),
-                                elements=np.array([2, 10, 2]))
+        if triple_grid:
+            self.create_triple_grid(lows=np.array([self.low, -7.5, 7.5]),
+                                    highs=np.array([-7.5, 7.5, self.high]),
+                                    elements=np.array([2, 10, 2]))
         if self.dx_grid is None:
             self.dx_grid = self.dx * cp.ones(self.elements)
 

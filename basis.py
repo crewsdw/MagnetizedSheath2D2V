@@ -171,6 +171,7 @@ class LGLBasis1D:
 
         # DG matrices
         self.mass, self.inv_mass = None, None
+        self.face_mass = None
         self.device_mass = None
         self.internal, self.numerical = None, None
 
@@ -187,6 +188,15 @@ class LGLBasis1D:
         # compute derivative matrix
         self.derivative_matrix = None
         self.set_deriv_matrix()
+
+        ### Matrices for elliptic class (not on device)
+        # advection and stiffness matrices (inner product arrays)
+        self.advection_matrix = None
+        self.advection_matrix = self.set_advection_matrix()
+        self.stiffness_matrix = self.advection_matrix.T
+
+        # face mass matrix, first and last columns of identity
+        self.face_mass = np.eye(self.order)[:, np.array([0, -1])]
 
         # Compute quadratic flux matrix
         # self.quadratic_flux_matrix = None
@@ -268,3 +278,18 @@ class LGLBasis1D:
             for i in range(self.order)])
         # Multiply by inverse mass matrix
         self.translation_matrix = np.matmul(self.inv_mass, translation_mass) + 0j
+
+    def set_advection_matrix(self):
+        adv = np.zeros((self.order, self.order))
+        # Fill matrix
+        for i in range(self.order):
+            for j in range(self.order):
+                adv[i, j] = self.weights[i] * self.weights[j] * sum(
+                    self.eigenvalues[s] * sp.legendre(s)(self.nodes[i]) *
+                    sp.legendre(s).deriv()(self.nodes[j]) for s in range(self.order))
+
+        # Clean machine error
+        adv[np.abs(adv) < 1.0e-15] = 0
+
+        return adv
+    
