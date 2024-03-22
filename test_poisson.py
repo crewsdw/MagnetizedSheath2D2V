@@ -14,7 +14,7 @@ font = {'size': 18}
 matplotlib.rc('font', **font)
 
 # Parameters
-order = 4
+order = 9
 # time_order = 3
 
 res_x, res_y, res_u, res_v = 10, 10, 40, 40
@@ -48,6 +48,28 @@ space_var.fourier_transform()
 plt.figure()
 plt.contourf(space_var.arr_nodal.reshape(grid.x.elements, grid.y.elements*grid.y.order).get())
 
+plt.figure()
+plt.plot(grid.y.arr.flatten(), space_var.arr_nodal[0, :, :].flatten().get(), 'o--')
+plt.grid(True)
+plt.show()
+
+rhs = cp.zeros((space_var.arr_nodal.shape[0], space_var.arr_nodal.shape[1]*space_var.arr_nodal.shape[2] + 1))
+# rhs[:, :-1] = cp.tensordot(space_var.arr_nodal, grid.y.local_basis.device_mass, axes=([2], [1])).reshape(elements[0], elements[1]*order)
+rhs[:, :-1] = cp.einsum('ijk,kn->ijn', space_var.arr_nodal, grid.y.local_basis.device_mass).reshape(elements[0], elements[1]*order)
+
+print(rhs.shape)
+
+# solution = cp.einsum('jk,j->k', e.inv_op[0,:,:], rhs[0,:])[:-1] / (grid.y.J[0] ** 2)
+solution = cp.matmul(e.inv_op[0,:,:], rhs[0,:]) / (grid.y.J[0]**2)
+print(solution[-1])
+solution = solution[:-1]
+plt.figure()
+plt.plot(grid.y.arr.flatten(), solution.get())
+plt.plot(grid.y.arr.flatten(), -1.0*np.sin(np.pi * grid.y.arr.flatten())/np.pi**2, 'k')
+plt.grid(True)
+plt.show()
+
+quit()
 
 print(space_var.arr_spectral.shape)
 
@@ -73,7 +95,7 @@ rhs[:, :-1] = cp.tensordot(space_var.arr_spectral, grid.y.local_basis.device_mas
 solution = cp.einsum('ikj, ik->ij', e.inv_op, rhs)[:, :-1]
 print(solution.shape)
 
-reshape_solution = solution.reshape(6, 10, 4)
+reshape_solution = solution.reshape(6, 10, order)
 nodal_solution = cp.fft.irfft(cp.fft.fftshift(reshape_solution, axes=0), axis=0)
 print(nodal_solution.shape)
 
