@@ -11,10 +11,12 @@ class SpaceScalar1P:
         self.arr_nodal, self.arr_spectral = None, None
     
     def fourier_transform(self):
-        self.arr_spectral = cp.fft.fftshift(cp.fft.rfft(self.arr_nodal, norm='forward', axis=0), axes=0)
+        # self.arr_spectral = cp.fft.fftshift(cp.fft.rfft(self.arr_nodal, norm='forward', axis=0), axes=(0,))
+        self.arr_spectral = cp.fft.rfft(self.arr_nodal, norm='forward', axis=0)
     
     def inverse_fourier_transform(self):
-        self.arr_nodal = cp.fft.irfft(cp.fft.fftshift(self.arr_spectral, axes=0), norm='forward')
+        # self.arr_nodal = cp.fft.irfft(cp.fft.fftshift(self.arr_spectral, axes=(0,)), norm='forward', axis=0)
+        self.arr_nodal = cp.fft.irfft(self.arr_spectral, norm='forward', axis=0)
 
     def integrate(self, grid):  # , array
         """ Integrate nodal array """

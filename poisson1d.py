@@ -74,8 +74,8 @@ plt.show()
 
 # %%
 # Automate it
-orders = np.array([2, 3, 4, 5, 6, 7, 8, 9, 10])
-Nx = np.array([3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610])
+orders = np.array([2, 3, 4, 5, 6, 7, 8])  # , 6, 7, 8, 9, 10])
+Nx = np.array([3, 5, 8, 13])  # , 21, 34, 55, 89, 144, 233, 377, 610])
 
 dx = np.zeros((orders.shape[0], Nx.shape[0]))
 penalty = np.zeros_like(dx)
@@ -131,4 +131,6 @@ for idx in range(orders.shape[0]):
 
 print(orders)
 print(slopes)
+
 # %%
+# Test 
