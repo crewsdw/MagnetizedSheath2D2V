@@ -53,7 +53,7 @@ class PeriodicGrid:
 class FiniteSpaceGrid:
     """ Class for non-periodic space dimensions on LGL quadrature sub-grids """
 
-    def __init__(self, low, high, elements, order):
+    def __init__(self, low, high, elements, order, triple_grid=False):
         self.low, self.high = low, high
         self.elements, self.order = elements, order
         self.local_basis = b.LGLBasis1D(order=self.order)
@@ -71,9 +71,14 @@ class FiniteSpaceGrid:
 
         # stretch / transform elements
         self.dx_grid = None
-        # self.create_triple_grid(lows=np.array([self.low, -8, 8]),
-        #                         highs=np.array([-8, 8, self.high]),
-        #                         elements=np.array([2, 11, 2]))
+        if triple_grid:
+            edge1 = self.low + 2/3 * (self.high - self.low)
+            edge2 = edge1 + 2/3 * (self.high - edge1)
+            N1 = elements // 3
+            N2 = elements // 3
+            self.create_triple_grid(lows=np.array([self.low, edge1, edge2]),
+                                    highs=np.array([edge1, edge2, self.high]),
+                                    elements=np.array([N1, N2, N2]))
         # self.create_triple_grid(lows=np.array([self.low, -7.5, 7.5]),
         #                         highs=np.array([-7.5, 7.5, self.high]),
         #                         elements=np.array([2, 10, 2]))
@@ -112,6 +117,28 @@ class FiniteSpaceGrid:
         # send to device
         self.device_arr = cp.asarray(self.arr)
         self.mid_points = np.array([0.5 * (self.arr[i, -1] + self.arr[i, 0]) for i in range(self.elements)])
+    
+    def create_triple_grid(self, lows, highs, elements):
+        """ Build a three-segment grid, each evenly-spaced """
+        # translate to [0, 1]
+        nodes_iso = (np.array(self.local_basis.nodes) + 1) / 2
+        # element left boundaries (including ghost elements)
+        dxs = (highs - lows) / elements
+        xl0 = np.linspace(lows[0], highs[0] - dxs[0], num=elements[0])
+        xl1 = np.linspace(lows[1], highs[1] - dxs[1], num=elements[1])
+        xl2 = np.linspace(lows[2], highs[2] - dxs[2], num=elements[2])
+        # construct coordinates
+        self.arr = np.zeros((elements[0] + elements[1] + elements[2], self.order))
+        for i in range(elements[0]):
+            self.arr[i, :] = xl0[i] + dxs[0] * nodes_iso
+        for i in range(elements[1]):
+            self.arr[elements[0] + i, :] = xl1[i] + dxs[1] * nodes_iso
+        for i in range(elements[2]):
+            self.arr[elements[0] + elements[1] + i, :] = xl2[i] + dxs[2] * nodes_iso
+        # send to device
+        self.device_arr = cp.asarray(self.arr)
+        self.mid_points = np.array([0.5 * (self.arr[i, -1] + self.arr[i, 0]) for i in range(self.elements)])
+        self.dx_grid = self.device_arr[:, -1] - self.device_arr[:, 0]
 
     def integrate(self, function, idx):
         return cp.tensordot(self.global_quads / self.J[:, None], function, axes=([0, 1], idx))
@@ -236,10 +263,10 @@ class PhaseSpace:
     """ The joint phase space has one periodic space direction, 
     another non-periodic space direction (LGL), and two velocity dimensions (LGL) with LGLs on tensor-product grid """
 
-    def __init__(self, lows, highs, elements, orders):
+    def __init__(self, lows, highs, elements, orders, triple_grid=False):
         # Grids
         self.x = PeriodicGrid(low=lows[0], high=highs[0], elements=elements[0], real_freqs=True)
-        self.y = FiniteSpaceGrid(low=lows[1], high=highs[1], elements=elements[1], order=orders[0])
+        self.y = FiniteSpaceGrid(low=lows[1], high=highs[1], elements=elements[1], order=orders[0], triple_grid=triple_grid)
         self.u = VelocityGrid(low=lows[2], high=highs[2], elements=elements[2], order=orders[1])
         self.v = VelocityGrid(low=lows[3], high=highs[3], elements=elements[3], order=orders[2])
 

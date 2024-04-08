@@ -31,35 +31,58 @@ class Elliptic:
         grad_num_flux = np.zeros_like(face_diff1)
 
         grad_for_roll = np.zeros_like(indicator)
+        # ind_for_roll = np.zeros_like(indicator)
 
         central_flux_operator = np.zeros((wavenumbers.shape[0], grid.elements, grid.order, grid.elements, grid.order))
         self.gradient_operator = np.zeros_like(central_flux_operator)
 
-        self.penalty = basis.order / grid.dx
+        self.penalty = 0  # basis.order / grid.dx
         # print('The central flux penalty is {:.3e}'.format(self.penalty))
+
+        jacobians = np.zeros(grid.elements + 2)
+        jacobians[1:-1] = grid.J_host[:]
+        jacobians[0] = jacobians[1]
+        jacobians[-1] = jacobians[-2]
 
         for i in range(grid.elements):
             for j in range(grid.order):
                 # Choose node
-                indicator[i+1, j] = 1.0
+                el_idx = i+1
+                indicator[el_idx, j] = 1.0
 
+                # new
+                # ind_for_roll[1:-1, :] = indicator
+                # ind_for_roll[0, -1] = indicator[0, 0]
+                # ind_for_roll[-1, 0] = indicator[-1, -1]
+                # face_diff0[:, 0] = indicator[1:-1, 0] - np.roll(ind_for_roll[:, -1], 1)[1:-1]
+                # face_diff0[:, 1] = indicator[1:-1, -1] - np.roll(ind_for_roll[:, 0], -1)[1:-1]
+
+                # modified
+
+                # Basic boundary conditions: Left copy-out, right Dirichlet 0
+                indicator[0, -1] = indicator[1, 0]
+                indicator[-1, 0] = -indicator[-2, -1]
                 # Compute strong form boundary flux (central)
                 face_diff0[:, 0] = indicator[1:-1, 0] - np.roll(indicator[:, -1], 1)[1:-1]
                 face_diff0[:, 1] = indicator[1:-1, -1] - np.roll(indicator[:, 0], -1)[1:-1]
-
+                
+                # numerical flux
                 num_flux[:, 0] = -0.5 * face_diff0[:, 0]
                 num_flux[:, 1] = 0.5 * face_diff0[:, 1]
 
                 # Compute gradient of this node
-                grad = grid.J_host[i] * (np.tensordot(basis.derivative_matrix.T, indicator[1:-1,:], axes=([1], [1])) +
-                                 np.tensordot(basis.numerical.get(), num_flux, axes=([1], [1]))).T
+                grad = grid.J_host[:, None] * (np.tensordot(basis.derivative_matrix.T, indicator[1:-1,:], axes=([1], [1])) +
+                                 np.tensordot(basis.numerical.get(), num_flux, axes=([1], [1]))).T 
                 grad_for_roll[1:-1, :] = grad
                 # Gradient boundary conditions: Copy-out
-                grad_for_roll[0, -1] = grad[0, 0]
-                grad_for_roll[-1, 0] = grad[-1, -1]
+                # grad_for_roll[0, -1] = grad[0, 0]
+                # grad_for_roll[-1, 0] = grad[-1, -1]
                 # Gradient boundary condition: periodic
                 # grad_for_roll[0, :] = grad[-1, -1]
                 # grad_for_roll[-1, 0] = grad[0, 0]
+                # Gradient BCs: Left zero (Neumann), right copy-out (Dirichlet)
+                grad_for_roll[0, -1] = -grad[0, 0]
+                grad_for_roll[-1, 0] = grad[-1, -1]
 
                 # Compute gradient's numerical flux (central)
                 face_diff1[:, 0] = grad[:, 0] - np.roll(grad_for_roll[:, -1], 1)[1:-1]
@@ -70,7 +93,7 @@ class Elliptic:
                 grad_num_flux[:, 1] = -0.5 * face_diff1[:, 1]
 
                 # Compute operator from gradient matrix
-                operator = grid.J_host[i] * (np.tensordot(basis.stiffness_matrix, grad, axes=([1], [1])) +
+                operator = grid.J_host[:, None] * (np.tensordot(basis.stiffness_matrix, grad, axes=([1], [1])) +
                                      np.tensordot(basis.face_mass, grad_num_flux - self.penalty * face_diff0, axes=([1], [1]))).T
 
                 for k in range(wavenumbers.shape[0]):
@@ -87,12 +110,15 @@ class Elliptic:
                 grad_for_roll[1:-1,:] = 0
 
         # Reshape to matrix and set gauge condition by fixing quadrature integral = 0 as extra equation in system
-        op0 = np.array([np.hstack([central_flux_operator[k, :, :, :, :].reshape(grid.elements * grid.order, grid.elements * grid.order),
-                         grid.global_quads.get().reshape(grid.elements * grid.order, 1)]) 
-                         for k in range(wavenumbers.shape[0])])
-        self.central_flux_operator = np.array([np.vstack([op0[k, :, :], 
-                                                          np.append(grid.global_quads.get().flatten(), 0)])
-                                                          for k in range(wavenumbers.shape[0])])
+        # NB. Gauge unnecessary with inhomogeneous BCs
+        # op0 = np.array([np.hstack([central_flux_operator[k, :, :, :, :].reshape(grid.elements * grid.order, grid.elements * grid.order),
+        #                  grid.global_quads.get().reshape(grid.elements * grid.order, 1)]) 
+        #                  for k in range(wavenumbers.shape[0])])
+        # self.central_flux_operator = np.array([np.vstack([op0[k, :, :], 
+        #                                                   np.append(grid.global_quads.get().flatten(), 0)])
+        #                                                   for k in range(wavenumbers.shape[0])])
+        self.central_flux_operator = central_flux_operator.reshape(wavenumbers.shape[0], 
+                                                                   grid.elements * grid.order, grid.elements * grid.order)
         # Clear machine errors
         self.central_flux_operator[np.abs(self.central_flux_operator) < 1.0e-15] = 0
 

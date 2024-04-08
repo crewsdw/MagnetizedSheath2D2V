@@ -11,19 +11,19 @@ import variables as v
 
 # %% 
 # Set up grid
-order = 4
-res_x, res_y, res_u, res_v = 20, 20, 10, 10
+order = 3
+res_x, res_y, res_u, res_v = 20, 6, 10, 10
 
 # Build grid
 print('Initializing grid...')
 orders = np.array([order, order, order])
 print('Grid initialized.')
 
-lows = np.array([-np.pi, -np.pi, -5, -5])
+lows = np.array([-np.pi, 0, -5, -5])
 highs = np.array([np.pi, np.pi, 5, 5])
 elements = np.array([res_x, res_y, res_u, res_v])
 
-grid = g.PhaseSpace(lows=lows, highs=highs, elements=elements, orders=orders)
+grid = g.PhaseSpace(lows=lows, highs=highs, elements=elements, orders=orders, triple_grid=True)
 
 # x_grid = g.FiniteSpaceGrid(low=-np.pi, high=np.pi, elements=9, order=2)
 # print('The element spacing is {:.3e}'.format(x_grid.dx))
@@ -33,7 +33,10 @@ space_var = v.SpaceScalar1P(resolutions=[res_x, res_y])
 # space var.arr_nodal =  # cp.ones((res_x, res_y, order))
 # space_var.arr_nodal = cp.sin(np.pi * grid.x.device_arr)[:, None, None] * cp.ones_like(grid.y.device_arr) 
 # space_var.arr_nodal = cp.ones_like(grid.x.device_arr)[:, None, None] * cp.sin(grid.y.device_arr)[None, :, :]
-space_var.arr_nodal = cp.sin(grid.x.device_arr)[:, None, None] * cp.sin(grid.y.device_arr)[None, :, :]
+# space_var.arr_nodal = cp.sin(grid.x.device_arr)[:, None, None] * cp.sin(grid.y.device_arr)[None, :, :]
+
+# Test Neumann on left
+space_var.arr_nodal = cp.sin(grid.x.device_arr)[:, None, None] * cp.cos(0.5 * grid.y.device_arr)[None, :, :]
 space_var.fourier_transform()
 
 # source = np.sin(2.0 * np.pi / x_grid.length * x_grid.arr)
@@ -70,15 +73,24 @@ e.build_central_flux_operator_dirichlet_fourier(grid=grid.y, basis=grid.y.local_
 e.invert_with_fourier(wavenumbers=grid.x.wavenumbers)
 
 # %%
-# Prepare solution
-source = space_var.arr_spectral.get()
-solution = np.zeros_like(source).reshape(source.shape[0], source.shape[1]*source.shape[2]) + 0j
+# Prepare solution (with gauge condition)
+# source = space_var.arr_spectral.get()
+# solution = np.zeros_like(source).reshape(source.shape[0], source.shape[1]*source.shape[2]) + 0j
 
-rhs = cp.zeros((source.shape[0], source.shape[1]*source.shape[2] + 1)) + 0j
+# rhs = cp.zeros((source.shape[0], source.shape[1]*source.shape[2] + 1)) + 0j
+# for idx in range(source.shape[0]):
+#     rhs[idx, :-1] = cp.einsum('jk,kn->jn', source[idx, :], grid.y.local_basis.device_mass).reshape(source.shape[1] * 
+#                                                                                                     source.shape[2])
+#     solution[idx, :] = (cp.matmul(e.inv_op[idx, :, :], rhs[idx, :])[:-1]).get() #  / (grid.y.J[0] ** 2)).get()
+
+# %%
+# Prepare solution (NO gauge condition)
+source = space_var.arr_spectral
+solution = cp.zeros_like(source).reshape(source.shape[0], source.shape[1]*source.shape[2]) + 0j
+rhs = cp.zeros((source.shape[0], source.shape[1]*source.shape[2])) + 0j
 for idx in range(source.shape[0]):
-    rhs[idx, :-1] = cp.einsum('jk,kn->jn', source[idx, :], grid.y.local_basis.device_mass).reshape(source.shape[1] * 
-                                                                                                    source.shape[2])
-    solution[idx, :] = (cp.matmul(e.inv_op[idx, :, :], rhs[idx, :])[:-1]).get() #  / (grid.y.J[0] ** 2)).get()
+    rhs[idx, :] = cp.einsum('jk,kn->jn', source[idx, :], grid.y.local_basis.device_mass).reshape(source.shape[1]*source.shape[2])
+    solution[idx, :] = cp.matmul(e.inv_op[idx, :, :], rhs[idx, :])
 
 # %%
 # Reshape and look at solution
@@ -99,5 +111,26 @@ plt.contourf(XX, YY, nodal_solution.reshape(grid.x.elements, grid.y.elements*gri
              cp.linspace(cp.amin(nodal_solution), cp.amax(nodal_solution), num=100).get())
 plt.colorbar(ax=plt.gca())
 plt.show()
+
+# %%
+# Plot a slice (lowering of mean)
+plt.figure()
+plt.plot(grid.y.arr.flatten(), nodal_solution[5, :, :].flatten().get(), 'o--')
+plt.xlabel('y axis'), plt.ylabel('Solution slice')
+
+# %%
+# Test gradient
+grad = cp.einsum('nijkl,nkl->nij', e.gradient_operator, source)
+
+grad_var = v.SpaceScalar1P(resolutions=[res_x, res_y])
+grad_var.arr_spectral = cp.asarray(grad)
+grad_var.inverse_fourier_transform()
+
+for element in range(elements[1]):
+    grad_var.arr_nodal[:, element, :] = grad_var.arr_nodal[:, element, :] # * grid.y.J[element]
+
+plt.figure()
+plt.plot(grid.y.arr.flatten(), grad_var.arr_nodal[5,:,:].flatten().get(), 'o--')
+plt.xlabel('y axis'), plt.ylabel('Gradient'), plt.ylim([0, 0.6]), plt.grid(True)
 
 # %%
